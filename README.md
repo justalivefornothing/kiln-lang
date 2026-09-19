@@ -1,14 +1,32 @@
-# kiln-lang
+# Kiln
 
-Portfolio project (in progress).
+A small language that compiles to WebAssembly and runs in the browser.
 
-Working title for a small language / runtime experiment. The repo still carries the default Vite + React + TypeScript scaffold in places, but the actual focus is the language side rather than the UI boilerplate.
+## Pipeline
 
-More concrete docs will land once the core is less fluid.
+**source → lexer → parser → type checker → emitter → WASM → worker runtime**
 
-## Status
+The UI shows tokens, AST, bytecode/WAT, and a live console + canvas host.
 
-In progress. Expect the structure and README to keep changing.
+## Run
+
+```bash
+npm install
+npm run dev
+```
+
+```bash
+npm test
+```
+
+## Layout
+
+| Path | Role |
+|------|------|
+| `src/compiler/` | Lexer, parser, checker, emitter, LEB128, opcodes |
+| `src/runtime/` | WASM runner (main + worker) |
+| `src/ui/` | Editor, pipeline view, inspectors |
+| `src/examples/` | Sample programs |
 
 ## License
 
