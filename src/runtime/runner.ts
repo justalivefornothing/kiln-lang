@@ -1,4 +1,3 @@
-import { createHost, runModule } from '../compiler/host'
 import type { RunMessage, RunRequest } from './runner.worker'
 
 export interface RunOutcome {
@@ -22,10 +21,24 @@ export interface RunHandle {
 
 const DEFAULT_TIMEOUT_MS = 8000
 
+function failedRun(error: string): RunOutcome {
+  return {
+    ok: false, error, instantiateMs: 0, runMs: 0, pixels: null,
+    pixelWrites: 0, prints: 0, exports: [], value: undefined,
+  }
+}
+
+function unavailableWorker(): RunHandle {
+  return {
+    promise: Promise.resolve(failedRun('Isolated execution is unavailable. Enable browser workers to run programs; compilation and inspection still work.')),
+    cancel: () => {},
+  }
+}
+
 /**
  * Execute a compiled module off the main thread so a runaway loop can be
- * terminated instead of freezing the playground. Falls back to inline
- * execution when workers are unavailable.
+ * terminated instead of freezing the playground. Never execute user programs
+ * inline: an unavailable worker must not bypass cancellation and timeout.
  */
 export function runInWorker(
   bytes: Uint8Array<ArrayBuffer>,
@@ -36,14 +49,14 @@ export function runInWorker(
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
   if (typeof Worker === 'undefined') {
-    return { promise: runInline(bytes, seed, entry, options.onPrint), cancel: () => {} }
+    return unavailableWorker()
   }
 
   let worker: Worker
   try {
     worker = new Worker(new URL('./runner.worker.ts', import.meta.url), { type: 'module' })
   } catch {
-    return { promise: runInline(bytes, seed, entry, options.onPrint), cancel: () => {} }
+    return unavailableWorker()
   }
 
   let settled = false
@@ -83,6 +96,7 @@ export function runInWorker(
         value: undefined,
       })
     worker.onmessage = (ev: MessageEvent<RunMessage>) => {
+      if (settled) return
       const msg = ev.data
       if (msg.type === 'print') {
         options.onPrint?.(msg.lines)
@@ -115,26 +129,11 @@ export function runInWorker(
       })
     }
     const req: RunRequest = { bytes, seed, entry }
-    worker.postMessage(req)
+    try {
+      worker.postMessage(req)
+    } catch {
+      finish(failedRun('The program could not be sent to its worker. Try running it again.'))
+    }
   })
   return { promise, cancel: () => cancel() }
-}
-
-async function runInline(bytes: Uint8Array<ArrayBuffer>, seed: number, entry: string, onPrint?: (lines: string[]) => void): Promise<RunOutcome> {
-  const lines: string[] = []
-  const host = createHost({ seed, onPrint: (t) => lines.push(t) })
-  const res = await runModule(bytes, host, entry)
-  if (lines.length) onPrint?.(lines)
-  return {
-    ok: res.ok,
-    error: res.error,
-    trapped: res.trapped,
-    instantiateMs: res.instantiateMs,
-    runMs: res.runMs,
-    pixels: host.pixels,
-    pixelWrites: host.pixelWrites,
-    prints: host.prints,
-    exports: res.exports,
-    value: res.value,
-  }
 }
