@@ -8,6 +8,11 @@ A small language that compiles to WebAssembly and runs in the browser.
 
 The UI shows tokens, AST, bytecode/WAT, and a live console + canvas host.
 
+Programs run in a dedicated browser worker with cancellation and an eight-second
+execution deadline. If the browser cannot create a worker, compilation and
+inspection remain available, but execution reports an error instead of running
+unbounded user code on the UI thread.
+
 ## Run
 
 ```bash
