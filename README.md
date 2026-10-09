@@ -1,14 +1,24 @@
 # Kiln
 
-**A statically typed language compiling directly to WebAssembly bytecode in the browser, featuring an inspectable multi-stage compiler pipeline and isolated worker execution.**
+A small typed language that compiles to WebAssembly in a browser playground. Inspect the tokens, syntax tree, emitted bytes, and disassembly alongside the source.
 
-Kiln is a zero-dependency language implementation written from scratch in TypeScript. It compiles directly to binary `.wasm` modules without invoking external toolchains (like Binaryen, Emscripten, or LLVM). Every phase of the compiler—from character tokens to bytecode disassembly and linear memory mutation—is exposed live in an interactive web studio.
+The compiler is implemented in TypeScript and emits binary `.wasm` modules directly, without an external compiler toolchain. The playground uses React and CodeMirror; the production compiler modules do not import third-party packages.
+
+## Current scope
+
+- Values: `i32`, `f32`, and `bool`, with explicit numeric casts and local type inference.
+- Functions, recursion, lexical scopes, `let`/`var`, conditionals, and `while` loops with `break`/`continue`.
+- Linear-memory views (`mem`, `mem8`, `memf`) and host functions for printing and a 256 × 256 canvas.
+
+The language has no strings, structs, modules, or general array type. Modules start with one 64 KiB memory page, and the language does not expose memory growth.
+
+One concrete maintenance change: [#1](https://github.com/justalivefornothing/kiln-lang/pull/1) removed the main-thread execution fallback. Previously, blocked or unavailable workers could send an infinite loop onto the UI thread, bypassing cancellation. Execution now reports an error in that case while compilation and inspection remain available. [Runtime tests](src/runtime/runner.test.ts) cover worker unavailability, cancellation, timeouts, and cleanup.
 
 ---
 
 ## Compiler Architecture
 
-The compiler is organized as a strict single-pass pipeline:
+The compiler has separate lexing, parsing, checking, and emission stages. The checker collects function signatures before checking bodies, allowing forward calls and recursion:
 
 ```
 Source Code
@@ -28,15 +38,15 @@ Source Code
 
 ### 1. Lexical Analysis (`src/compiler/lexer.ts`)
 - Preserves precise character offsets (`Span { start, end, line, col }`) across all tokens.
-- Supports typed literals (integers, floats, booleans), identifiers, arithmetic/bitwise operators, and keyword control flow (`fn`, `let`, `if`, `else`, `while`, `return`).
+- Supports numeric and boolean literals, identifiers, arithmetic/comparison/logical operators, and keyword control flow (`fn`, `let`, `if`, `else`, `while`, `return`).
 
 ### 2. Recursive-Descent Parser (`src/compiler/parser.ts`)
 - Operator precedence parsing (Pratt-style) for binary expressions with proper associativity.
-- Produces a strongly typed Abstract Syntax Tree (`ASTNode`) with explicit span annotations for precise compiler diagnostics.
+- Produces a syntax tree (`Program` and `Node` in `src/compiler/ast.ts`) with source spans for compiler diagnostics.
 
 ### 3. Static Semantic Checker (`src/compiler/checker.ts`)
-- Scope resolution with lexical environments and shadow checking.
-- Static type inference and structural type matching.
+- Scope resolution with lexical environments; nested scopes may shadow outer bindings, while duplicate declarations in one scope are rejected.
+- Infers local variable types and checks primitive types, call arguments, assignments, and return paths.
 - Enforces strict typing before bytecode generation (e.g. prohibiting implicit numeric coercions).
 
 ### 4. Direct WebAssembly Binary Emitter (`src/compiler/emitter.ts`)
@@ -51,16 +61,14 @@ Source Code
 
 ---
 
-## Architectural Decision Records (ADRs)
+## Implementation notes
 
-### ADR 1: Direct Binary Bytecode Emission vs. Binaryen/LLVM
-* **Context:** We needed a way to produce executable WebAssembly in the browser.
-* **Decision:** Implement a custom binary emitter that constructs the raw byte array directly rather than bundling third-party native wrappers like Binaryen.
-* **Rationale:** Bundling Binaryen adds megabytes of WASM overhead and hides the binary specification. Hand-writing the binary sections and LEB128 encoders keeps the bundle sub-50KB, zero-dependency, and exposes the exact byte layout in the UI inspector.
+### Direct binary emission
+The emitter constructs sections and LEB128 encodings directly, recording byte ranges and instruction annotations for the inspector. This makes the output easy to examine, but every supported language feature needs a corresponding emitter implementation. There is no separate optimization stage.
 
-### ADR 2: Sandboxed Web Worker Execution with Hard Deadlines
-* **Context:** Compiling user-supplied code introduces infinite loop hazards (`while true {}`).
-* **Decision:** Compiled WebAssembly modules never execute on the main UI thread. Execution is dispatched to a dedicated Web Worker with an enforced 8-second execution deadline and cooperative cancellation.
+### Worker execution
+* **Context:** Running user-supplied code introduces infinite loop hazards (`while true {}`).
+* **Behavior:** The playground runs compiled WebAssembly in a dedicated Web Worker. Cancellation and the default 8-second timeout terminate the worker.
 * **Fallback Behavior:** If the host environment cannot spawn a Web Worker, compilation and bytecode inspection remain fully operational, but code execution fails fast with an actionable error rather than freezing the browser event loop.
 
 ---
@@ -81,8 +89,8 @@ src/
 │   ├── emitter.ts        # Direct binary .wasm module builder
 │   └── disassembler.ts   # Bytecode to human-readable text (WAT-like)
 ├── runtime/
-│   ├── runner.ts         # Host instantiation & canvas bindings
-│   └── worker.ts         # Sandboxed worker execution harness
+│   ├── runner.ts         # Worker lifecycle, cancellation, and timeout
+│   └── runner.worker.ts  # Runs modules using compiler/host.ts
 └── ui/                   # Editor, AST visualizer, and bytecode explorer
 ```
 
@@ -92,7 +100,7 @@ The compiler includes an end-to-end test suite (`npm test`) covering:
 * **Lexer & Parser**: Expression precedence, nested control flow, error reporting.
 * **LEB128**: Boundary conditions (0, 127, 128, 16383, 16384, negative signed values).
 * **Semantic Analysis**: Scope shadowing, type mismatch rejection, recursive functions.
-* **End-to-End Execution**: Compiling and evaluating factorial, fibonacci, and a 65,536-pixel Mandelbrot set rendered directly through WebAssembly linear memory.
+* **End-to-End Execution**: Compiling and evaluating factorial and fibonacci, reading/writing linear memory, and rendering Mandelbrot via 65,536 calls to the host's `setpixel` function.
 
 ```bash
 npm install
