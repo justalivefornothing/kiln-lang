@@ -110,4 +110,4 @@ npm run dev       # Starts interactive compiler studio
 
 ## License
 
-MIT
+[MIT](LICENSE)
